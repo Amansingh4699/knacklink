@@ -235,7 +235,6 @@
         <ul id="nav-menu">
             {% if user.is_authenticated %}
                 <li><a href="{% url 'dashboard' %}" class="{% if request.path == '/dashboard/' %}active{% endif %}"><i class='bx bx-grid-alt'></i> Dashboard</a></li>
-                <li><a href="{% url 'add_usertime' %}" class="{% if request.path == '/dashboard/add/' %}active{% endif %}"><i class='bx bx-plus-circle'></i> Add Entry</a></li>
                 <li><a href="{% url 'logout' %}"><i class='bx bx-log-out'></i> Logout</a></li>
             {% else %}
                 <li><a href="{% url 'login' %}" class="{% if request.path == '/login/' %}active{% endif %}"><i class='bx bx-log-in'></i> Login</a></li>

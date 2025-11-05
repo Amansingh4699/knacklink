@@ -1,9 +1,9 @@
+# employees/views.py
 from django.contrib.auth.decorators import user_passes_test, login_required
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import authenticate, login, logout
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from django.utils import timezone
-from datetime import timedelta
 from django.contrib import messages
 from django.contrib.auth.models import User
 from django.http import HttpResponse
@@ -11,10 +11,18 @@ from .models import UserTime, AccessRequest
 from .forms import UserTimeForm
 import csv
 
+# ---------------------------
+# Helper: build date list
+# ---------------------------
+def daterange(start_date, end_date):
+    cur = start_date
+    while cur <= end_date:
+        yield cur
+        cur += timedelta(days=1)
 
-# =======================
-# 🔹 LOGIN VIEW
-# =======================
+# ---------------------------
+# LOGIN / LOGOUT (unchanged)
+# ---------------------------
 def user_login(request):
     if request.method == "POST":
         username = request.POST.get('username')
@@ -23,266 +31,314 @@ def user_login(request):
         user = authenticate(request, username=username, password=password)
         if user:
             login(request, user)
-            # Redirect admins to admin dashboard
             if user.is_superuser:
                 return redirect('admin_user_list')
-            else:
-                return redirect('dashboard')
+            return redirect('dashboard')
         else:
             return render(request, 'login.html', {'error': 'Invalid username or password'})
 
     return render(request, 'login.html')
 
-
-# =======================
-# 🔹 LOGOUT
-# =======================
 def user_logout(request):
     logout(request)
     return redirect('login')
 
 
-# =======================
-# 🔹 NORMAL USER DASHBOARD
-# =======================
+# ---------------------------
+# User Dashboard (inline edit + filter)
+# ---------------------------
+from django.http import JsonResponse
+
 @login_required(login_url='login')
 def usertime_dashboard(request):
     """
-    Dashboard for logged-in user.
-    Supports date filtering and validation for future/invalid ranges.
+    Shows current week's timesheet (Mon–Sun).
+    Automatically resets (blank new week) every Monday.
+    Users can still manually select older weeks via filter.
     """
-
     today = timezone.now().date()
-    filter_active = False
 
-    # Default to current week
-    start_date = today - timedelta(days=today.weekday())
-    end_date = start_date + timedelta(days=6)
+    # === 1️⃣ Check for custom date filters ===
+    start_date_str = request.GET.get('start_date')
+    end_date_str = request.GET.get('end_date')
 
-    # Capture filter inputs
-    start_date_str = request.GET.get("start_date")
-    end_date_str = request.GET.get("end_date")
-
-    # ✅ If filter form submitted
-    if start_date_str and end_date_str:
+    # === 2️⃣ Default to CURRENT WEEK (auto refresh every Monday) ===
+    if not start_date_str or not end_date_str:
+        week_start = today - timedelta(days=today.weekday())  # Monday
+        week_end = week_start + timedelta(days=6)             # Sunday
+        start_date, end_date = week_start, week_end
+        filter_active = False
+    else:
         try:
             start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
             end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
             filter_active = True
-
-            # Validation checks
-            if start_date > end_date:
-                messages.warning(request, "⚠️ Start date cannot be after end date.")
-                return redirect("dashboard")
-
-            if start_date > today and end_date > today:
-                messages.warning(request, "⚠️ Selected range is in the future — no data available yet.")
-                return redirect("dashboard")
-
         except ValueError:
-            messages.error(request, "⚠️ Invalid date format.")
-            return redirect("dashboard")
+            messages.error(request, "Invalid date format.")
+            return redirect('dashboard')
 
-    # ✅ Query user data within range
-    records = UserTime.objects.filter(
-        user=request.user,
-        date__range=[start_date, end_date]
-    ).order_by("date")
+    # === 3️⃣ POST Save logic (inline edit) ===
+    if request.method == "POST":
+        changed = 0
+        for d in daterange(start_date, end_date):
+            field_name = f"hours_{d.isoformat()}"
+            val = request.POST.get(field_name)
+            if not val:
+                continue
 
-    if filter_active and not records.exists():
-        messages.info(request, "ℹ️ No entries found for the selected date range.")
+            try:
+                hours = float(val)
+            except ValueError:
+                continue
 
-    # Stats
-    total_hours = sum([r.total_hours() for r in records])
-    avg_hours = round(total_hours / records.count(), 2) if records else 0
+            ut, created = UserTime.objects.get_or_create(
+                user=request.user,
+                date=d,
+                defaults={
+                    'day_of_week': d.strftime("%A"),
+                    'productive_hours': hours,
+                    'start_time': timezone.now().time(),
+                    'finish_time': timezone.now().time(),
+                    'target_hours': 8
+                }
+            )
+            if not created:
+                ut.productive_hours = hours
+                ut.day_of_week = d.strftime("%A")
+                ut.save()
+            changed += 1
+
+        if request.headers.get("x-requested-with") == "XMLHttpRequest":
+            return JsonResponse({
+                "success": True,
+                "message": f"✅ Saved {changed} entries successfully!"
+            })
+        messages.success(request, f"✅ Saved {changed} entries successfully!")
+        return redirect('dashboard')
+
+    # === 4️⃣ AUTO-CLEANUP: reset view to new week if all old entries are from past weeks ===
+    # Find the most recent record
+    last_entry = UserTime.objects.filter(user=request.user).order_by('-date').first()
+    if last_entry and last_entry.date < (today - timedelta(days=today.weekday())):
+        # It’s a new week → don’t reuse old records → show blank week
+        start_date = today - timedelta(days=today.weekday())
+        end_date = start_date + timedelta(days=6)
+
+    # === 5️⃣ Get week records ===
+    records_qs = UserTime.objects.filter(user=request.user, date__range=[start_date, end_date])
+    records = {ut.date: float(ut.productive_hours or 0) for ut in records_qs}
+    date_list = [start_date + timedelta(days=i) for i in range(7)]
+
+    # === 6️⃣ Grand total for visible week ===
+    total_hours = round(sum(records.get(d, 0) for d in date_list), 2)
 
     context = {
-        "records": records,
-        "total_hours": total_hours,
-        "avg_hours": avg_hours,
-        "week_start": start_date,
-        "week_end": end_date,
-        "filter_active": filter_active,
-        "admin_view": False,   # Important for correct template section
+        'records': records,
+        'date_list': date_list,
+        'start_date': start_date,
+        'end_date': end_date,
+        'filter_active': filter_active,
+        'total_hours': total_hours,
+        'admin_view': False,
     }
+    return render(request, 'dashboard.html', context)
 
-    return render(request, "dashboard.html", context)
 
-# =======================
-# 🔹 ADD WORK ENTRY
-# =======================
+# ---------------------------
+# Add user time (not used if inline editing) - keep for compatibility if needed
+# ---------------------------
 @login_required(login_url='login')
 def add_usertime(request):
+    # kept in case routes still use it; but requirement says remove separate add page
     if request.method == 'POST':
         form = UserTimeForm(request.POST)
-
         if form.is_valid():
             entry = form.save(commit=False)
             entry.user = request.user
-
-            # Validation
             if entry.start_time >= entry.finish_time:
                 messages.error(request, "⚠️ Start time must be earlier than End time.")
                 return render(request, 'usertime_form.html', {'form': form})
-
             entry.day_of_week = entry.date.strftime("%A")
             entry.save()
             messages.success(request, '✅ Entry added successfully!')
             return redirect('dashboard')
-        else:
-            messages.error(request, "Please correct the highlighted errors.")
     else:
         form = UserTimeForm()
-
     return render(request, 'usertime_form.html', {'form': form})
 
 
-# =======================
-# 🔹 ADMIN: LIST ALL EMPLOYEES
-# =======================
+# ---------------------------
+# Admin: list users
+# ---------------------------
 @user_passes_test(lambda u: u.is_superuser)
 def admin_user_list(request):
     employees = User.objects.filter(is_superuser=False)
     return render(request, 'dashboard.html', {'employees': employees, 'admin_view': True})
 
 
-# =======================
-# 🔹 ADMIN: VIEW SPECIFIC EMPLOYEE TIMESHEET
-# =======================
+# ---------------------------
+# Admin: view specific user's timesheet with filtering & inline save
+# ---------------------------
 @user_passes_test(lambda u: u.is_superuser)
 def admin_user_timesheet(request, user_id):
-    """
-    Admin view to see a specific employee's timesheet
-    with working date filters and validation.
-    """
     employee = get_object_or_404(User, id=user_id)
     today = timezone.now().date()
-    filter_active = False
 
-    # Default to current week
-    start_date = today - timedelta(days=today.weekday())
-    end_date = start_date + timedelta(days=6)
-
-    # Get filter inputs
+    # GET filters
     start_date_str = request.GET.get('start_date')
     end_date_str = request.GET.get('end_date')
 
-    if start_date_str and end_date_str:
+    if not start_date_str or not end_date_str:
+        week_start = today - timedelta(days=today.weekday())
+        week_end = week_start + timedelta(days=6)
+        start_date = week_start
+        end_date = week_end
+        filter_active = False
+    else:
         try:
             start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
             end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
             filter_active = True
-
-            # Validation
             if start_date > end_date:
                 messages.warning(request, "⚠️ Start date cannot be after end date.")
                 return redirect('admin_user_timesheet', user_id=user_id)
-
-            if start_date > today and end_date > today:
-                messages.warning(request, "⚠️ Future dates selected — no data available.")
-                return redirect('admin_user_timesheet', user_id=user_id)
-
         except ValueError:
             messages.error(request, "Invalid date format.")
             return redirect('admin_user_timesheet', user_id=user_id)
 
-    # 🔹 Apply filter range
-    records = UserTime.objects.filter(
-        user=employee,
-        date__range=[start_date, end_date]
-    ).order_by('-date')
+    max_range_days = 365
+    if (end_date - start_date).days > max_range_days:
+        messages.warning(request, f"Please choose a range shorter than {max_range_days} days.")
+        return redirect('admin_user_timesheet', user_id=user_id)
 
-    if filter_active and not records.exists():
-        messages.info(request, "ℹ️ No entries found for this range.")
+    # POST: admin can also save hours for this employee inline
+    if request.method == "POST":
+        changed = 0
+        for d in daterange(start_date, end_date):
+            field = f"hours_{d.isoformat()}"
+            val = request.POST.get(field)
+            if val is None or val == '':
+                # set to 0 if exists
+                existing = UserTime.objects.filter(user=employee, date=d).first()
+                if existing:
+                    existing.productive_hours = 0
+                    existing.save()
+                continue
+            try:
+                hours = float(val)
+            except ValueError:
+                messages.error(request, f"Invalid hours for {d}.")
+                return redirect('admin_user_timesheet', user_id=user_id)
 
-    # 🔹 Stats
-    total_hours = sum([r.total_hours() for r in records])
-    avg_hours = round(total_hours / records.count(), 2) if records else 0
+            ut, created = UserTime.objects.get_or_create(
+                user=employee,
+                date=d,
+                defaults={'day_of_week': d.strftime("%A"),
+                          'productive_hours': hours}
+            )
+            if not created:
+                ut.productive_hours = hours
+                ut.day_of_week = d.strftime("%A")
+                ut.save()
+            changed += 1
+        messages.success(request, f"✅ Saved hours for {changed} day(s).")
+        qs = f"?start_date={start_date.isoformat()}&end_date={end_date.isoformat()}" if filter_active else ""
+        return redirect('admin_user_timesheet', user_id=user_id)
 
+    # GET: prepare records for that employee
+    records_qs = UserTime.objects.filter(user=employee, date__range=[start_date, end_date])
+    records = {ut.date.isoformat(): float(ut.productive_hours or 0) for ut in records_qs}
+    total_hours = sum(records.get(d.isoformat(), 0) for d in daterange(start_date, end_date))
+
+    date_list = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
     context = {
         'records': records,
-        'total_hours': total_hours,
-        'avg_hours': avg_hours,
-        'employee': employee,
-        'week_start': start_date,
-        'week_end': end_date,
+        'start_date': start_date,
+        'end_date': end_date,
         'filter_active': filter_active,
-        'admin_view': False,  # Keeps consistent layout
+        'total_hours': total_hours,
+        'employee': employee,
+        'date_list': date_list,  # ✅ ADD THIS
+        'admin_view': False,
     }
-
     return render(request, 'dashboard.html', context)
 
-# =======================
-# 🔹 ADMIN: EXPORT EMPLOYEE TIMESHEET
-# =======================
-@user_passes_test(lambda u: u.is_authenticated)  # ✅ Allow both admin and user
+
+# ---------------------------
+# Export CSV - respects optional date filter and user_id
+# ---------------------------
+@user_passes_test(lambda u: u.is_authenticated)
 def export_employee_timesheet(request, user_id=None):
     """
-    Exports a user's timesheet data.
-    - Admins can export anyone’s
-    - Normal users can only export their own
+    If user_id is provided (admin), export that user's timesheet.
+    Otherwise export current user's timesheet.
+    Accepts start_date & end_date as GET params to export filtered range.
     """
-    # Determine which user's data to export
+    # determine target employee
     if user_id:
         employee = get_object_or_404(User, id=user_id)
+        # non-superuser cannot export others
         if not request.user.is_superuser and employee != request.user:
             return HttpResponse("Unauthorized", status=403)
     else:
-        employee = request.user  # ✅ Superuser or user exporting their own data
+        employee = request.user
 
-    records = UserTime.objects.filter(user=employee)
+    # parse optional filter
+    start_date_str = request.GET.get('start_date')
+    end_date_str = request.GET.get('end_date')
+    if start_date_str and end_date_str:
+        try:
+            start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+            if start_date > end_date:
+                return HttpResponse("Invalid date range", status=400)
+            qs = UserTime.objects.filter(user=employee, date__range=[start_date, end_date]).order_by('date')
+            filename_range = f"{start_date.isoformat()}_to_{end_date.isoformat()}"
+        except ValueError:
+            return HttpResponse("Invalid date format", status=400)
+    else:
+        qs = UserTime.objects.filter(user=employee).order_by('date')
+        filename_range = "all"
 
     response = HttpResponse(content_type='text/csv')
-    response['Content-Disposition'] = f'attachment; filename="{employee.username}_timesheet.csv"'
+    response['Content-Disposition'] = f'attachment; filename="{employee.username}_timesheet_{filename_range}.csv"'
 
     writer = csv.writer(response)
-    writer.writerow(['Date', 'Day', 'Start Time', 'Finish Time', 'Productive Hours', 'Target Hours', 'Comment'])
-
-    for record in records:
-        writer.writerow([
-            record.date,
-            record.day_of_week,
-            record.start_time,
-            record.finish_time,
-            record.productive_hours,
-            record.target_hours,
-            record.comment or ''
-        ])
+    writer.writerow(['Date', 'Day', 'Productive Hours', 'Target Hours', 'Comment'])
+    for r in qs:
+        writer.writerow([r.date.isoformat(), r.day_of_week, r.productive_hours, r.target_hours, r.comment or ''])
 
     return response
 
+
+# ---------------------------
+# Delete user timesheet (admin)
+# ---------------------------
 @user_passes_test(lambda u: u.is_superuser)
 def delete_user_timesheet(request):
-    """
-    Allows admin to delete all timesheet entries for a selected user
-    after confirming their password.
-    """
     users = User.objects.filter(is_superuser=False)
     if request.method == "POST":
         user_id = request.POST.get("user_id")
         password = request.POST.get("password")
 
-        # ✅ Validate admin password
         if not request.user.check_password(password):
             messages.error(request, "❌ Incorrect admin password.")
             return redirect("delete_user_timesheet")
 
-        # ✅ Validate user selection
         employee = get_object_or_404(User, id=user_id)
         deleted_count, _ = UserTime.objects.filter(user=employee).delete()
-
-        if deleted_count > 0:
+        if deleted_count:
             messages.success(request, f"✅ Deleted {deleted_count} timesheet entries for {employee.username}.")
         else:
             messages.info(request, f"ℹ️ No timesheet entries found for {employee.username}.")
-
         return redirect("admin_user_list")
 
     return render(request, "delete_timesheet.html", {"users": users})
 
-# =======================
-# 🔹 USER ACCESS REQUEST
-# =======================
+
+# ---------------------------
+# Request access (unchanged)
+# ---------------------------
 def request_access(request):
     if request.method == "POST":
         name = request.POST.get('name')
