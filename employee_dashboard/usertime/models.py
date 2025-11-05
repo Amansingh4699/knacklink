@@ -12,10 +12,11 @@ class UserTime(models.Model):
     comment = models.TextField(blank=True, null=True)
 
     def total_hours(self):
-        from datetime import datetime
+        from datetime import datetime, timedelta
         start = datetime.combine(self.date, self.start_time)
         end = datetime.combine(self.date, self.finish_time)
-        return round((end - start).total_seconds() / 3600, 2)
+        delta = end - start
+        return round(delta.total_seconds() / 3600, 2)
 
     def __str__(self):
         return f"{self.user.username} - {self.date}"

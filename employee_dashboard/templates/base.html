@@ -1,0 +1,24 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>UserTime Dashboard</title>
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+</head>
+<body>
+    <header>
+        <h2>SOFIGENT - UserTime Dashboard</h2>
+        {% if user.is_authenticated %}
+            <nav>
+                <a href="{% url 'usertime_dashboard' %}">Dashboard</a> |
+                <a href="{% url 'add_usertime' %}">Add Entry</a> |
+                <a href="{% url 'logout' %}">Logout</a>
+            </nav>
+        {% endif %}
+    </header>
+    <hr>
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+</body>
+</html>

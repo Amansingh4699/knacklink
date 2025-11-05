@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% block content %}
+<h3>Welcome {{ user.username }}</h3>
+<p>Week: {{ week_start }} - {{ week_end }}</p>
+
+<table border="1" width="100%">
+    <tr>
+        <th>Date</th><th>Day</th><th>Start</th><th>Finish</th>
+        <th>Prod Hours</th><th>Target</th><th>Comment</th>
+    </tr>
+    {% for record in records %}
+    <tr>
+        <td>{{ record.date }}</td>
+        <td>{{ record.day_of_week }}</td>
+        <td>{{ record.start_time }}</td>
+        <td>{{ record.finish_time }}</td>
+        <td>{{ record.productive_hours }}</td>
+        <td>{{ record.target_hours }}</td>
+        <td>{{ record.comment }}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="7">No records found for this week.</td></tr>
+    {% endfor %}
+</table>
+
+<p><b>Total Hours:</b> {{ total_hours }} | <b>Average Hours:</b> {{ avg_hours }}</p>
+{% endblock %}
