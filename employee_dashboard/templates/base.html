@@ -222,26 +222,53 @@
 </head>
 <body>
 
-    <div class="background-animate"></div>
+   <div class="background-animate"></div>
 
-    <!-- ===== NAVBAR ===== -->
-    <nav>
-        <div class="brand" onclick="window.location.href='/'">
-            <i class='bx bxs-bolt'></i> KnackLink
-        </div>
+<!-- ===== NAVBAR ===== -->
+<nav>
+    <div class="brand" onclick="window.location.href='/'">
+        <i class='bx bxs-bolt'></i> KnackLink
+    </div>
 
-        <i class='bx bx-menu menu-toggle' id="menu-toggle"></i>
+    <i class='bx bx-menu menu-toggle' id="menu-toggle"></i>
 
-        <ul id="nav-menu">
-            {% if user.is_authenticated %}
-                <li><a href="{% url 'dashboard' %}" class="{% if request.path == '/dashboard/' %}active{% endif %}"><i class='bx bx-grid-alt'></i> Dashboard</a></li>
-                <li><a href="{% url 'logout' %}"><i class='bx bx-log-out'></i> Logout</a></li>
-            {% else %}
-                <li><a href="{% url 'login' %}" class="{% if request.path == '/login/' %}active{% endif %}"><i class='bx bx-log-in'></i> Login</a></li>
-                <li><a href="{% url 'register' %}" class="{% if request.path == '/register/' %}active{% endif %}"><i class='bx bx-user-plus'></i> Register</a></li>
+    <ul id="nav-menu">
+        {% if user.is_authenticated %}
+            <li>
+                <a href="{% url 'dashboard' %}" class="{% if request.path == '/dashboard/' %}active{% endif %}">
+                    <i class='bx bx-grid-alt'></i> Dashboard
+                </a>
+            </li>
+
+            {% if user.is_superuser %}
+            <li>
+                <a href="/admin/" target="_blank"
+                   style="background:#f1f5f9; color:#1e3a8a; font-weight:600; border-radius:8px; padding:6px 12px;">
+                    <i class='bx bx-cog'></i> Admin Panel
+                </a>
+            </li>
             {% endif %}
-        </ul>
-    </nav>
+
+            <li>
+                <a href="{% url 'logout' %}">
+                    <i class='bx bx-log-out'></i> Logout
+                </a>
+            </li>
+        {% else %}
+            <li>
+                <a href="{% url 'login' %}" class="{% if request.path == '/login/' %}active{% endif %}">
+                    <i class='bx bx-log-in'></i> Login
+                </a>
+            </li>
+            <li>
+                <a href="{% url 'register' %}" class="{% if request.path == '/register/' %}active{% endif %}">
+                    <i class='bx bx-user-plus'></i> Register
+                </a>
+            </li>
+        {% endif %}
+    </ul>
+</nav>
+
 
     <!-- ===== MESSAGES ===== -->
     <div class="messages">
