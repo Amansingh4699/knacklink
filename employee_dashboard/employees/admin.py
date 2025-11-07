@@ -1,12 +1,16 @@
 from django.contrib import admin
 from django.contrib.auth.models import User, Group
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.contrib.auth.forms import ReadOnlyPasswordHashField, AdminPasswordChangeForm
 from django import forms
 from .models import UserTime, AccessRequest
 
 
 # 🚫 Hide Groups model completely from admin
-admin.site.unregister(Group)
+try:
+    admin.site.unregister(Group)
+except admin.sites.NotRegistered:
+    pass
 
 
 # ========================
@@ -36,17 +40,29 @@ class CustomUserCreationForm(forms.ModelForm):
 
 
 class CustomUserChangeForm(forms.ModelForm):
+    """Minimal edit form with proper password field (shows link)."""
+    password = ReadOnlyPasswordHashField(
+        label="Password",
+        help_text=(
+            "Raw passwords are not stored, so there is no way to see this user's password, "
+            "but you can change the password using "
+            "<a href=\"../password/\">this form</a>."
+        ),
+    )
+
     class Meta:
         model = User
-        fields = ['username', 'email', 'is_active', 'is_staff', 'is_superuser']
+        fields = ['username', 'email', 'password', 'is_active', 'is_staff', 'is_superuser']
 
 
 # ========================
-# Minimal User Admin
+# Clean User Admin (no extra perms, works perfectly)
 # ========================
 class CustomUserAdmin(BaseUserAdmin):
     add_form = CustomUserCreationForm
     form = CustomUserChangeForm
+    change_password_form = AdminPasswordChangeForm  # ✅ Correct built-in password change form
+
     list_display = ['username', 'email', 'is_staff', 'is_superuser', 'is_active']
     search_fields = ['username', 'email']
     list_filter = ['is_staff', 'is_superuser', 'is_active']
@@ -54,25 +70,29 @@ class CustomUserAdmin(BaseUserAdmin):
 
     fieldsets = (
         (None, {'fields': ('username', 'email', 'password')}),
-        ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser')}),
+        ('Account Status', {'fields': ('is_active', 'is_staff', 'is_superuser')}),
     )
 
     add_fieldsets = (
         (None, {
             'classes': ('wide',),
-            'fields': ('username', 'email', 'password1', 'password2', 'is_active', 'is_staff', 'is_superuser'),
+            'fields': (
+                'username', 'email', 'password1', 'password2',
+                'is_active', 'is_staff', 'is_superuser'
+            ),
         }),
     )
 
-    # rename section in admin sidebar
-    def get_model_perms(self, request):
-        perms = super().get_model_perms(request)
-        # rename "Users" to "Add Users"
-        perms["add_users_label"] = "Add Users"
-        return perms
+    # ✅ Remove permission fields dynamically
+    def get_form(self, request, obj=None, **kwargs):
+        form = super().get_form(request, obj, **kwargs)
+        for field in ['groups', 'user_permissions']:
+            if field in form.base_fields:
+                form.base_fields.pop(field)
+        return form
 
 
-# Unregister the default and re-register
+# ✅ Unregister default User and re-register
 try:
     admin.site.unregister(User)
 except admin.sites.NotRegistered:
