@@ -36,7 +36,7 @@ db.sqlite3
 # IDE / Editor files
 # ======================
 .vscode/
-.idea/
+../.idea/
 *.iml
 
 # ======================
