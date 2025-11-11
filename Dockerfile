@@ -1,24 +1,26 @@
-# Use lightweight Python image
-FROM python:3.11-slim
+# Use official Python image
+FROM python:3.12-slim
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-# Create working directory
+# Set working directory in container
 WORKDIR /app
 
+# Copy only requirements first (for Docker caching)
+COPY ../requirements.txt .
+
 # Install dependencies
-COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy project files
-COPY . /app/
+# Copy the entire project into the container
+COPY .. /app/
+
+# Set workdir to where manage.py actually exists
+WORKDIR /app/employee_dashboard
 
 # Collect static files
 RUN python manage.py collectstatic --noinput
 
+# Expose port
 EXPOSE 8000
 
-# Run Gunicorn server
+# Run Django app using Gunicorn
 CMD ["gunicorn", "employee_dashboard.wsgi:application", "--bind", "0.0.0.0:8000"]
