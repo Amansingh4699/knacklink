@@ -11,7 +11,22 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # SECURITY
 SECRET_KEY = os.getenv("SECRET_KEY", "unsafe-default-key")
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+# Get the default allowed hosts from the .env file
 ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
+
+# Trust the Railway domain for login forms
+# Get the default allowed hosts from the .env file
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
+
+# Add the Railway domain to the list
+RAILWAY_HOSTNAME = os.environ.get('RAILWAY_PUBLIC_DOMAIN')
+if RAILWAY_HOSTNAME:
+    ALLOWED_HOSTS.append(RAILWAY_HOSTNAME)
+
+# Trust the Railway domain for login forms
+CSRF_TRUSTED_ORIGINS = []
+if RAILWAY_HOSTNAME:
+    CSRF_TRUSTED_ORIGINS.append(f"https{RAILWAY_HOSTNAME}")
 
 # APPS
 INSTALLED_APPS = [
